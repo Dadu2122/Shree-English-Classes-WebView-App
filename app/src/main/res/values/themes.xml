@@ -1,0 +1,8 @@
+<resources>
+    <style name="Theme.ShreeEnglishClasses" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/navy</item>
+        <item name="colorPrimaryVariant">@color/navy</item>
+        <item name="colorOnPrimary">@color/gold</item>
+        <item name="android:statusBarColor">@color/navy</item>
+    </style>
+</resources>
