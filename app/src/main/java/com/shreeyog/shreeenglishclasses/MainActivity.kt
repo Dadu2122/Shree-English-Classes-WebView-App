@@ -2,6 +2,7 @@ package com.shreeyog.shreeenglishclasses
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -10,6 +11,7 @@ import android.view.KeyEvent
 import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.appcompat.app.AppCompatActivity
@@ -22,6 +24,11 @@ class MainActivity : AppCompatActivity() {
     private val siteUrl = "https://dadu2122.github.io/Shree-English-Classes/"
     private val MIC_PERMISSION_REQUEST_CODE = 101
 
+    // Exposed to the page's JavaScript as `window.AndroidApp`.
+    // Used only for the Live Class feature, which needs the microphone —
+    // that part is opened in the device's real Chrome browser instead of
+    // this app's embedded WebView, since Chrome's mic access is more
+    // reliable across devices.
     inner class WebAppInterface {
         @JavascriptInterface
         fun openLiveInBrowser(url: String) {
@@ -31,6 +38,8 @@ class MainActivity : AppCompatActivity() {
                 try {
                     startActivity(intent)
                 } catch (e: Exception) {
+                    // Chrome not found/available — fall back to whatever
+                    // browser the device has set as default.
                     startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
                 }
             }
@@ -62,7 +71,31 @@ class MainActivity : AppCompatActivity() {
 
         webView.addJavascriptInterface(WebAppInterface(), "AndroidApp")
 
-        webView.webViewClient = WebViewClient()
+        webView.webViewClient = object : WebViewClient() {
+            // WebView can only render http/https pages itself. Links like
+            // whatsapp://, tel:, mailto:, intent:// etc. need to be handed
+            // off to the matching app on the phone instead — otherwise the
+            // WebView shows a "Web page not available / ERR_UNKNOWN_URL_SCHEME"
+            // error, which is what was happening with the WhatsApp button.
+            override fun shouldOverrideUrlLoading(
+                view: WebView,
+                request: WebResourceRequest
+            ): Boolean {
+                val url = request.url
+                val scheme = url.scheme ?: ""
+                if (scheme == "http" || scheme == "https") {
+                    return false // let the WebView load it normally
+                }
+                return try {
+                    startActivity(Intent(Intent.ACTION_VIEW, url))
+                    true
+                } catch (e: ActivityNotFoundException) {
+                    // No app installed to handle this link (e.g. WhatsApp not
+                    // installed) — nothing sensible to do but avoid crashing.
+                    true
+                }
+            }
+        }
         webView.webChromeClient = object : WebChromeClient() {
             override fun onPermissionRequest(request: PermissionRequest) {
                 runOnUiThread {
@@ -109,3 +142,4 @@ class MainActivity : AppCompatActivity() {
         return super.onKeyDown(keyCode, event)
     }
 }
+
