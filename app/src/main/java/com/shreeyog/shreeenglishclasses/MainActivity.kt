@@ -2,9 +2,12 @@ package com.shreeyog.shreeenglishclasses
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
 import android.view.KeyEvent
+import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebView
@@ -18,6 +21,21 @@ class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private val siteUrl = "https://dadu2122.github.io/Shree-English-Classes/"
     private val MIC_PERMISSION_REQUEST_CODE = 101
+
+    inner class WebAppInterface {
+        @JavascriptInterface
+        fun openLiveInBrowser(url: String) {
+            runOnUiThread {
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                intent.setPackage("com.android.chrome")
+                try {
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                }
+            }
+        }
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -41,6 +59,8 @@ class MainActivity : AppCompatActivity() {
         webView.settings.loadWithOverviewMode = true
         webView.settings.useWideViewPort = true
         webView.settings.mediaPlaybackRequiresUserGesture = false
+
+        webView.addJavascriptInterface(WebAppInterface(), "AndroidApp")
 
         webView.webViewClient = WebViewClient()
         webView.webChromeClient = object : WebChromeClient() {
@@ -89,4 +109,3 @@ class MainActivity : AppCompatActivity() {
         return super.onKeyDown(keyCode, event)
     }
 }
-
