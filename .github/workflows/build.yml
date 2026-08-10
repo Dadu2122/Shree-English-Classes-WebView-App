@@ -19,6 +19,8 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/gradle-build-action@v3
+        with:
+          gradle-version: '8.7'
 
       - name: Build Release APK
         run: gradle assembleRelease
