@@ -1,22 +1,39 @@
 package com.shreeyog.shreeenglishclasses
 
+import android.Manifest
 import android.annotation.SuppressLint
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.view.KeyEvent
+import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private val siteUrl = "https://dadu2122.github.io/Shree-English-Classes/"
+    private val MIC_PERMISSION_REQUEST_CODE = 101
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+
+        // Ask Android for microphone permission at runtime (required Android 6+).
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.RECORD_AUDIO),
+                MIC_PERMISSION_REQUEST_CODE
+            )
+        }
 
         webView = findViewById(R.id.webview)
         webView.settings.javaScriptEnabled = true
@@ -27,10 +44,45 @@ class MainActivity : AppCompatActivity() {
         webView.settings.mediaPlaybackRequiresUserGesture = false
 
         webView.webViewClient = WebViewClient()
-        webView.webChromeClient = WebChromeClient()
+        webView.webChromeClient = object : WebChromeClient() {
+            // Grant the WebView's own permission request (mic) for Agora once
+            // Android-level permission is already available.
+            override fun onPermissionRequest(request: PermissionRequest) {
+                runOnUiThread {
+                    val resources = request.resources
+                    val audioNeeded = resources.any {
+                        it == PermissionRequest.RESOURCE_AUDIO_CAPTURE
+                    }
+                    if (audioNeeded && ContextCompat.checkSelfPermission(
+                            this@MainActivity, Manifest.permission.RECORD_AUDIO
+                        ) == PackageManager.PERMISSION_GRANTED
+                    ) {
+                        request.grant(resources)
+                    } else {
+                        request.deny()
+                    }
+                }
+            }
+        }
 
         if (savedInstanceState == null) {
             webView.loadUrl(siteUrl)
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        // Reload the page once mic permission is granted so Agora can pick it up
+        // if the user was already on the Live Class screen.
+        if (requestCode == MIC_PERMISSION_REQUEST_CODE &&
+            grantResults.isNotEmpty() &&
+            grantResults[0] == PackageManager.PERMISSION_GRANTED
+        ) {
+            webView.reload()
         }
     }
 
