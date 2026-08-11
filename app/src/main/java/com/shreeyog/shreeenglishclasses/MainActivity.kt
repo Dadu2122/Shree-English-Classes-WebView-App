@@ -12,6 +12,7 @@ import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.appcompat.app.AppCompatActivity
@@ -68,6 +69,10 @@ class MainActivity : AppCompatActivity() {
         webView.settings.loadWithOverviewMode = true
         webView.settings.useWideViewPort = true
         webView.settings.mediaPlaybackRequiresUserGesture = false
+        // Always fetch the live site fresh over the network instead of serving a
+        // possibly-outdated cached copy — this is what was causing students to see
+        // stale versions of the app until they cleared cache / reinstalled.
+        webView.settings.cacheMode = WebSettings.LOAD_NO_CACHE
 
         webView.addJavascriptInterface(WebAppInterface(), "AndroidApp")
 
@@ -115,9 +120,11 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        if (savedInstanceState == null) {
-            webView.loadUrl(siteUrl)
-        }
+        // Always (re)load the live site on every launch — including when Android has
+        // killed the app in the background and the user reopens it, which used to be
+        // treated as a "restore" (savedInstanceState != null) and skip loading fresh
+        // content, leaving whatever stale page was left in memory.
+        webView.loadUrl(siteUrl)
     }
 
     override fun onRequestPermissionsResult(
@@ -142,4 +149,3 @@ class MainActivity : AppCompatActivity() {
         return super.onKeyDown(keyCode, event)
     }
 }
-
