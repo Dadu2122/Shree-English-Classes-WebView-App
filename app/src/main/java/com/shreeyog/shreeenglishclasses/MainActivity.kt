@@ -14,12 +14,15 @@ import android.util.Base64
 import android.view.KeyEvent
 import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -31,6 +34,20 @@ class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private val siteUrl = "https://dadu2122.github.io/Shree-English-Classes/"
     private val MIC_PERMISSION_REQUEST_CODE = 101
+
+    // ---------- File chooser plumbing ----------
+    // Plain Android WebView does NOT open the OS file picker when a page taps an
+    // <input type="file">, unless WebChromeClient.onShowFileChooser is implemented
+    // and actually launches the picker intent. Without this, "Choose file" buttons
+    // (Add Mini Book / PDF, Cover Photo, etc.) silently do nothing — the exact bug
+    // reported. This launcher + callback pair wires that up properly.
+    private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
+    private val fileChooserLauncher: ActivityResultLauncher<Intent> =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            val results = WebChromeClient.FileChooserParams.parseResult(result.resultCode, result.data)
+            fileChooserCallback?.onReceiveValue(results)
+            fileChooserCallback = null
+        }
 
     // Exposed to the page's JavaScript as `window.AndroidApp`.
     inner class WebAppInterface {
@@ -162,6 +179,35 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             }
+
+            // This is the piece that was missing: without it, tapping any
+            // <input type="file"> in the page (Book Title's "Choose PDF",
+            // "Cover Photo", etc.) does absolutely nothing — Android WebView
+            // needs this callback implemented to actually open a file picker.
+            override fun onShowFileChooser(
+                webView: WebView?,
+                filePathCallback: ValueCallback<Array<Uri>>?,
+                fileChooserParams: FileChooserParams?
+            ): Boolean {
+                // If a previous chooser is somehow still pending, cancel it cleanly
+                // instead of leaking the callback.
+                fileChooserCallback?.onReceiveValue(null)
+                fileChooserCallback = filePathCallback
+
+                val intent = fileChooserParams?.createIntent()
+                return try {
+                    fileChooserLauncher.launch(intent)
+                    true
+                } catch (e: ActivityNotFoundException) {
+                    fileChooserCallback = null
+                    Toast.makeText(this@MainActivity, "No file picker app found on this device.", Toast.LENGTH_SHORT).show()
+                    false
+                } catch (e: Exception) {
+                    fileChooserCallback = null
+                    Toast.makeText(this@MainActivity, "Could not open file picker: ${e.message}", Toast.LENGTH_SHORT).show()
+                    false
+                }
+            }
         }
 
         // Always (re)load the live site on every launch — including when Android has
@@ -193,3 +239,4 @@ class MainActivity : AppCompatActivity() {
         return super.onKeyDown(keyCode, event)
     }
 }
+
