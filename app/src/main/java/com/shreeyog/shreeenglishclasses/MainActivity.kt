@@ -3,10 +3,14 @@ package com.shreeyog.shreeenglishclasses
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
+import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
+import android.os.Environment
+import android.provider.MediaStore
+import android.util.Base64
 import android.view.KeyEvent
 import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
@@ -15,9 +19,12 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import java.io.File
+import java.io.FileOutputStream
 
 class MainActivity : AppCompatActivity() {
 
@@ -26,11 +33,11 @@ class MainActivity : AppCompatActivity() {
     private val MIC_PERMISSION_REQUEST_CODE = 101
 
     // Exposed to the page's JavaScript as `window.AndroidApp`.
-    // Used only for the Live Class feature, which needs the microphone —
-    // that part is opened in the device's real Chrome browser instead of
-    // this app's embedded WebView, since Chrome's mic access is more
-    // reliable across devices.
     inner class WebAppInterface {
+
+        // Live Class needs the microphone — that part is opened in the device's real
+        // Chrome browser instead of this app's embedded WebView, since Chrome's mic
+        // access is more reliable across devices.
         @JavascriptInterface
         fun openLiveInBrowser(url: String) {
             runOnUiThread {
@@ -39,9 +46,48 @@ class MainActivity : AppCompatActivity() {
                 try {
                     startActivity(intent)
                 } catch (e: Exception) {
-                    // Chrome not found/available — fall back to whatever
-                    // browser the device has set as default.
                     startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                }
+            }
+        }
+
+        // Saves a base64-encoded file (PDFs, etc.) straight to the phone's Downloads
+        // folder. Needed because Android WebView does NOT treat blob: URL downloads
+        // (the normal web way of doing "Save File") as real downloads inside an app's
+        // own WebView — clicking a <a download> link on a blob URL silently does
+        // nothing here, even though the exact same code works fine in Chrome. This
+        // bridge is the reliable native-side workaround for that.
+        @JavascriptInterface
+        fun saveBase64File(base64Data: String, fileName: String, mimeType: String) {
+            runOnUiThread {
+                try {
+                    val bytes = Base64.decode(base64Data, Base64.DEFAULT)
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                        // Android 10+ : save via MediaStore (Downloads collection),
+                        // no storage permission needed.
+                        val resolver = contentResolver
+                        val values = ContentValues().apply {
+                            put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                            put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+                            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                        }
+                        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                        if (uri != null) {
+                            resolver.openOutputStream(uri)?.use { out -> out.write(bytes) }
+                            Toast.makeText(this@MainActivity, "Downloaded: $fileName", Toast.LENGTH_SHORT).show()
+                        } else {
+                            Toast.makeText(this@MainActivity, "Download failed — try again.", Toast.LENGTH_SHORT).show()
+                        }
+                    } else {
+                        // Older Android — write directly to the public Downloads directory.
+                        val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                        if (!downloadsDir.exists()) downloadsDir.mkdirs()
+                        val file = File(downloadsDir, fileName)
+                        FileOutputStream(file).use { out -> out.write(bytes) }
+                        Toast.makeText(this@MainActivity, "Downloaded: $fileName", Toast.LENGTH_SHORT).show()
+                    }
+                } catch (e: Exception) {
+                    Toast.makeText(this@MainActivity, "Download failed: ${e.message}", Toast.LENGTH_SHORT).show()
                 }
             }
         }
@@ -95,8 +141,6 @@ class MainActivity : AppCompatActivity() {
                     startActivity(Intent(Intent.ACTION_VIEW, url))
                     true
                 } catch (e: ActivityNotFoundException) {
-                    // No app installed to handle this link (e.g. WhatsApp not
-                    // installed) — nothing sensible to do but avoid crashing.
                     true
                 }
             }
