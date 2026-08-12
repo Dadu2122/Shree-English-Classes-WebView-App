@@ -146,20 +146,41 @@ class MainActivity : AppCompatActivity() {
             // WebView shows a "Web page not available / ERR_UNKNOWN_URL_SCHEME"
             // error, which is what was happening with the WhatsApp button.
             override fun shouldOverrideUrlLoading(
-                view: WebView,
-                request: WebResourceRequest
-            ): Boolean {
-                val url = request.url
-                val scheme = url.scheme ?: ""
-                if (scheme == "http" || scheme == "https") {
-                    return false // let the WebView load it normally
-                }
-                return try {
-                    startActivity(Intent(Intent.ACTION_VIEW, url))
-                    true
+    view: WebView,
+    request: WebResourceRequest
+): Boolean {
+    val url = request.url
+    val scheme = url.scheme ?: ""
+    if (scheme == "http" || scheme == "https") {
+        val host = url.host ?: ""
+        val isOwnSite = host.equals("dadu2122.github.io", ignoreCase = true)
+        if (!isOwnSite) {
+            // Any external site (Teachmint, Google Meet, YouTube live, etc.) opens in the
+            // phone's real Chrome instead of this app's embedded WebView — WebView blocks
+            // or mishandles microphone access on many third-party sites, while Chrome
+            // handles it reliably. Same fix already used for openLiveInBrowser(), just
+            // applied to every external link, not only the built-in Live Class button.
+            return try {
+                val chromeIntent = Intent(Intent.ACTION_VIEW, url)
+                chromeIntent.setPackage("com.android.chrome")
+                try {
+                    startActivity(chromeIntent)
                 } catch (e: ActivityNotFoundException) {
-                    true
+                    startActivity(Intent(Intent.ACTION_VIEW, url))
                 }
+                true
+            } catch (e: Exception) {
+                false
+            }
+        }
+        return false // your own site — keep loading inside the app's WebView as before
+    }
+    return try {
+        startActivity(Intent(Intent.ACTION_VIEW, url))
+        true
+    } catch (e: ActivityNotFoundException) {
+        true
+    }
             }
         }
         webView.webChromeClient = object : WebChromeClient() {
