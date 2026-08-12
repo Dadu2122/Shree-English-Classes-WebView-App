@@ -116,11 +116,13 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
             != PackageManager.PERMISSION_GRANTED
         ) {
             ActivityCompat.requestPermissions(
                 this,
-                arrayOf(Manifest.permission.RECORD_AUDIO),
+                arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA),
                 MIC_PERMISSION_REQUEST_CODE
             )
         }
@@ -187,13 +189,18 @@ class MainActivity : AppCompatActivity() {
             override fun onPermissionRequest(request: PermissionRequest) {
                 runOnUiThread {
                     val resources = request.resources
-                    val audioNeeded = resources.any {
-                        it == PermissionRequest.RESOURCE_AUDIO_CAPTURE
-                    }
-                    if (audioNeeded && ContextCompat.checkSelfPermission(
-                            this@MainActivity, Manifest.permission.RECORD_AUDIO
-                        ) == PackageManager.PERMISSION_GRANTED
-                    ) {
+                    val audioRequested = resources.any { it == PermissionRequest.RESOURCE_AUDIO_CAPTURE }
+                    val videoRequested = resources.any { it == PermissionRequest.RESOURCE_VIDEO_CAPTURE }
+
+                    val audioOk = !audioRequested || ContextCompat.checkSelfPermission(
+                        this@MainActivity, Manifest.permission.RECORD_AUDIO
+                    ) == PackageManager.PERMISSION_GRANTED
+                    val videoOk = !videoRequested || ContextCompat.checkSelfPermission(
+                        this@MainActivity, Manifest.permission.CAMERA
+                    ) == PackageManager.PERMISSION_GRANTED
+
+                    if ((audioRequested || videoRequested) && audioOk && videoOk) {
+                        // Grant exactly what the page asked for (mic-only, camera-only, or both)
                         request.grant(resources)
                     } else {
                         request.deny()
@@ -246,7 +253,7 @@ class MainActivity : AppCompatActivity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == MIC_PERMISSION_REQUEST_CODE &&
             grantResults.isNotEmpty() &&
-            grantResults[0] == PackageManager.PERMISSION_GRANTED
+            grantResults.any { it == PackageManager.PERMISSION_GRANTED }
         ) {
             webView.reload()
         }
