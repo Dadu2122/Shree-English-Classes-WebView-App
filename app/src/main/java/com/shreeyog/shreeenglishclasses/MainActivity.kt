@@ -108,6 +108,55 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+
+        // Mic permission bridge: called when JS detects a PERMISSION_DENIED error.
+        // Checks if permission is granted; if not, requests it.
+        // If permanently denied, opens app Settings so user can manually enable mic.
+        @JavascriptInterface
+        fun recheckMicPermission() {
+            runOnUiThread {
+                val hasMicPermission = ContextCompat.checkSelfPermission(
+                    this@MainActivity,
+                    Manifest.permission.RECORD_AUDIO
+                ) == PackageManager.PERMISSION_GRANTED
+
+                if (hasMicPermission) {
+                    // Permission already granted — just reload the page so mic retry works
+                    webView.reload()
+                } else {
+                    // Check if permission was permanently denied (user tapped "Don't allow" before)
+                    val isPermanentlyDenied = !ActivityCompat.shouldShowRequestPermissionRationale(
+                        this@MainActivity,
+                        Manifest.permission.RECORD_AUDIO
+                    )
+
+                    if (isPermanentlyDenied) {
+                        // Permanently denied — show a toast and open app Settings
+                        Toast.makeText(
+                            this@MainActivity,
+                            "Mic access block hai — Settings me allow karo",
+                            Toast.LENGTH_LONG
+                        ).show()
+                        openAppSettings()
+                    } else {
+                        // Not yet denied, or can still ask — request permission
+                        ActivityCompat.requestPermissions(
+                            this@MainActivity,
+                            arrayOf(Manifest.permission.RECORD_AUDIO),
+                            MIC_PERMISSION_REQUEST_CODE
+                        )
+                    }
+                }
+            }
+        }
+
+        // Helper: open the app's own Settings page
+        private fun openAppSettings() {
+            val intent = Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.fromParts("package", packageName, null)
+            }
+            startActivity(intent)
+        }
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -148,41 +197,41 @@ class MainActivity : AppCompatActivity() {
             // WebView shows a "Web page not available / ERR_UNKNOWN_URL_SCHEME"
             // error, which is what was happening with the WhatsApp button.
             override fun shouldOverrideUrlLoading(
-    view: WebView,
-    request: WebResourceRequest
-): Boolean {
-    val url = request.url
-    val scheme = url.scheme ?: ""
-    if (scheme == "http" || scheme == "https") {
-        val host = url.host ?: ""
-        val isOwnSite = host.equals("dadu2122.github.io", ignoreCase = true)
-        if (!isOwnSite) {
-            // Any external site (Teachmint, Google Meet, YouTube live, etc.) opens in the
-            // phone's real Chrome instead of this app's embedded WebView — WebView blocks
-            // or mishandles microphone access on many third-party sites, while Chrome
-            // handles it reliably. Same fix already used for openLiveInBrowser(), just
-            // applied to every external link, not only the built-in Live Class button.
-            return try {
-                val chromeIntent = Intent(Intent.ACTION_VIEW, url)
-                chromeIntent.setPackage("com.android.chrome")
-                try {
-                    startActivity(chromeIntent)
-                } catch (e: ActivityNotFoundException) {
-                    startActivity(Intent(Intent.ACTION_VIEW, url))
+                view: WebView,
+                request: WebResourceRequest
+            ): Boolean {
+                val url = request.url
+                val scheme = url.scheme ?: ""
+                if (scheme == "http" || scheme == "https") {
+                    val host = url.host ?: ""
+                    val isOwnSite = host.equals("dadu2122.github.io", ignoreCase = true)
+                    if (!isOwnSite) {
+                        // Any external site (Teachmint, Google Meet, YouTube live, etc.) opens in the
+                        // phone's real Chrome instead of this app's embedded WebView — WebView blocks
+                        // or mishandles microphone access on many third-party sites, while Chrome
+                        // handles it reliably. Same fix already used for openLiveInBrowser(), just
+                        // applied to every external link, not only the built-in Live Class button.
+                        return try {
+                            val chromeIntent = Intent(Intent.ACTION_VIEW, url)
+                            chromeIntent.setPackage("com.android.chrome")
+                            try {
+                                startActivity(chromeIntent)
+                            } catch (e: ActivityNotFoundException) {
+                                startActivity(Intent(Intent.ACTION_VIEW, url))
+                            }
+                            true
+                        } catch (e: Exception) {
+                            false
+                        }
+                    }
+                    return false // your own site — keep loading inside the app's WebView as before
                 }
-                true
-            } catch (e: Exception) {
-                false
-            }
-        }
-        return false // your own site — keep loading inside the app's WebView as before
-    }
-    return try {
-        startActivity(Intent(Intent.ACTION_VIEW, url))
-        true
-    } catch (e: ActivityNotFoundException) {
-        true
-    }
+                return try {
+                    startActivity(Intent(Intent.ACTION_VIEW, url))
+                    true
+                } catch (e: ActivityNotFoundException) {
+                    true
+                }
             }
         }
         webView.webChromeClient = object : WebChromeClient() {
