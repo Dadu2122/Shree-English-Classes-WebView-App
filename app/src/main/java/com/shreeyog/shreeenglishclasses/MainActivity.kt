@@ -398,4 +398,110 @@ class MainActivity : AppCompatActivity() {
                             val fallbackUrl = Regex("S\\.browser_fallback_url=([^;]+)")
                                 .find(url.toString())?.groupValues?.get(1)
                             if (fallbackUrl != null) {
-                                startActivity(Intent(Intent.ACTION_VIEW, Uri.par
+                                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(Uri.decode(fallbackUrl))))
+                            }
+                            true
+                        } catch (e2: Exception) {
+                            true
+                        }
+                    }
+                }
+
+                return try {
+                    startActivity(Intent(Intent.ACTION_VIEW, url))
+                    true
+                } catch (e: ActivityNotFoundException) {
+                    true
+                }
+            }
+        }
+        webView.webChromeClient = object : WebChromeClient() {
+            override fun onPermissionRequest(request: PermissionRequest) {
+                runOnUiThread {
+                    val resources = request.resources
+                    val audioRequested = resources.any { it == PermissionRequest.RESOURCE_AUDIO_CAPTURE }
+                    val videoRequested = resources.any { it == PermissionRequest.RESOURCE_VIDEO_CAPTURE }
+
+                    val audioOk = !audioRequested || ContextCompat.checkSelfPermission(
+                        this@MainActivity, Manifest.permission.RECORD_AUDIO
+                    ) == PackageManager.PERMISSION_GRANTED
+                    val videoOk = !videoRequested || ContextCompat.checkSelfPermission(
+                        this@MainActivity, Manifest.permission.CAMERA
+                    ) == PackageManager.PERMISSION_GRANTED
+
+                    if ((audioRequested || videoRequested) && audioOk && videoOk) {
+                        // Grant exactly what the page asked for (mic-only, camera-only, or both)
+                        request.grant(resources)
+                    } else {
+                        request.deny()
+                    }
+                }
+            }
+
+            // This is the piece that was missing: without it, tapping any
+            // <input type="file"> in the page (Book Title's "Choose PDF",
+            // "Cover Photo", etc.) does absolutely nothing — Android WebView
+            // needs this callback implemented to actually open a file picker.
+            override fun onShowFileChooser(
+                webView: WebView?,
+                filePathCallback: ValueCallback<Array<Uri>>?,
+                fileChooserParams: FileChooserParams?
+            ): Boolean {
+                // If a previous chooser is somehow still pending, cancel it cleanly
+                // instead of leaking the callback.
+                fileChooserCallback?.onReceiveValue(null)
+                fileChooserCallback = filePathCallback
+
+                val intent = fileChooserParams?.createIntent()
+                return try {
+                    fileChooserLauncher.launch(intent)
+                    true
+                } catch (e: ActivityNotFoundException) {
+                    fileChooserCallback = null
+                    Toast.makeText(this@MainActivity, "No file picker app found on this device.", Toast.LENGTH_SHORT).show()
+                    false
+                } catch (e: Exception) {
+                    fileChooserCallback = null
+                    Toast.makeText(this@MainActivity, "Could not open file picker: ${e.message}", Toast.LENGTH_SHORT).show()
+                    false
+                }
+            }
+        }
+
+        // Always (re)load the live site on every launch — including when Android has
+        // killed the app in the background and the user reopens it, which used to be
+        // treated as a "restore" (savedInstanceState != null) and skip loading fresh
+        // content, leaving whatever stale page was left in memory.
+        webView.loadUrl(siteUrl)
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == MIC_PERMISSION_REQUEST_CODE &&
+            grantResults.isNotEmpty() &&
+            grantResults.any { it == PackageManager.PERMISSION_GRANTED }
+        ) {
+            webView.reload()
+        }
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_BACK && webView.canGoBack()) {
+            webView.goBack()
+            return true
+        }
+        return super.onKeyDown(keyCode, event)
+    }
+
+    override fun onDestroy() {
+        agoraEngine?.leaveChannel()
+        RtcEngine.destroy()
+        agoraEngine = null
+        agoraScope.cancel()
+        super.onDestroy()
+    }
+}
