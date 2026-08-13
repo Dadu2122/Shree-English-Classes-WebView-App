@@ -194,8 +194,16 @@ class MainActivity : AppCompatActivity() {
         // only offers Card/NetBanking/Wallet). Stripping that marker makes Razorpay
         // treat this WebView like a normal mobile browser, so UPI shows up in the
         // checkout list — same as it already does when the site is opened in Chrome.
-        val defaultUA = webView.settings.userAgentString
-        webView.settings.userAgentString = defaultUA.replace("wv", "").replace("  ", " ")
+        // Full fix: Android WebView's User-Agent differs from real Chrome in TWO ways —
+// it adds a "; wv)" marker AND an extra "Version/x.x" token before "Chrome/".
+// Removing only "wv" wasn't enough; Razorpay was still detecting the "Version/x.x"
+// token and hiding UPI. Stripping both makes the UA identical to real Chrome's,
+// so Razorpay treats this WebView as a normal mobile browser and shows UPI.
+val defaultUA = webView.settings.userAgentString
+val cleanedUA = defaultUA
+    .replace("; wv", "")
+    .replace(Regex("Version/[0-9.]+\\s+"), "")
+webView.settings.userAgentString = cleanedUA
 
         webView.addJavascriptInterface(WebAppInterface(), "AndroidApp")
 
