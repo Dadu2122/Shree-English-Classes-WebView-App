@@ -28,12 +28,100 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import java.io.File
 import java.io.FileOutputStream
+// ---------- Native Agora (Phase 1: audio only) additions ----------
+import io.agora.rtc2.RtcEngine
+import io.agora.rtc2.RtcEngineConfig
+import io.agora.rtc2.IRtcEngineEventHandler
+import io.agora.rtc2.ChannelMediaOptions
+import io.agora.rtc2.Constants
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private val siteUrl = "https://dadu2122.github.io/Shree-English-Classes/"
     private val MIC_PERMISSION_REQUEST_CODE = 101
+
+    // ---------- Native Agora (Phase 1: audio only) ----------
+    // Same App ID as the JS side's AGORA_APP_ID (index.html, ~line 7527) — keep these two in sync
+    // if the Agora project is ever rotated.
+    private var agoraEngine: RtcEngine? = null
+    private val AGORA_APP_ID = "5b0232817d3b4c33a96d515a476e6a5f"
+    private val AGORA_TOKEN_SERVER = "https://shreeyog-agora-token-server.vercel.app/api/generate-token"
+    private val agoraScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+
+    private val agoraEventHandler = object : IRtcEngineEventHandler() {
+        override fun onJoinChannelSuccess(channel: String?, uid: Int, elapsed: Int) {
+            runOnUiThread {
+                webView.evaluateJavascript(
+                    "window.onNativeAgoraJoined && window.onNativeAgoraJoined($uid)", null
+                )
+            }
+        }
+        override fun onUserJoined(uid: Int, elapsed: Int) {
+            runOnUiThread {
+                webView.evaluateJavascript(
+                    "window.onNativeAgoraUserJoined && window.onNativeAgoraUserJoined($uid)", null
+                )
+            }
+        }
+        override fun onUserOffline(uid: Int, reason: Int) {
+            runOnUiThread {
+                webView.evaluateJavascript(
+                    "window.onNativeAgoraUserLeft && window.onNativeAgoraUserLeft($uid)", null
+                )
+            }
+        }
+        override fun onError(err: Int) {
+            runOnUiThread {
+                webView.evaluateJavascript(
+                    "window.onNativeAgoraError && window.onNativeAgoraError($err)", null
+                )
+            }
+        }
+    }
+
+    private fun ensureAgoraEngine(): RtcEngine {
+        if (agoraEngine == null) {
+            val config = RtcEngineConfig()
+            config.mContext = applicationContext
+            config.mAppId = AGORA_APP_ID
+            config.mEventHandler = agoraEventHandler
+            agoraEngine = RtcEngine.create(config)
+            agoraEngine?.enableAudio()
+            agoraEngine?.disableVideo() // Phase 1 = audio only; video stays on the JS/Web SDK side for now
+        }
+        return agoraEngine!!
+    }
+
+    private fun hasMicPermission(): Boolean =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+
+    // Talks to the same Vercel token server the JS side already uses (AGORA_TOKEN_SERVER in index.html).
+    private suspend fun fetchAgoraToken(channel: String, uid: Int): String? = withContext(Dispatchers.IO) {
+        try {
+            val url = URL("$AGORA_TOKEN_SERVER?channel=$channel&uid=$uid&role=host")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.requestMethod = "GET"
+            conn.connectTimeout = 8000
+            val code = conn.responseCode
+            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+            val response = stream.bufferedReader().readText()
+            val json = JSONObject(response)
+            if (json.has("token")) json.getString("token") else null
+        } catch (e: Exception) {
+            null
+        }
+    }
 
     // ---------- File chooser plumbing ----------
     // Plain Android WebView does NOT open the OS file picker when a page taps an
@@ -157,6 +245,52 @@ class MainActivity : AppCompatActivity() {
             }
             startActivity(intent)
         }
+
+        // ---------- Native Agora bridge (Phase 1: audio only) ----------
+        // Called from index.html's liveJoinChannel() instead of AgoraRTC.createMicrophoneAudioTrack()
+        // when running inside this app (IS_NATIVE_ANDROID_AGORA flag in the JS).
+        @JavascriptInterface
+        fun joinLiveClassAudio(channel: String, uid: Int) {
+            if (!hasMicPermission()) {
+                // Reuses the same permission-request path as recheckMicPermission() above.
+                // onRequestPermissionsResult() reloads the page on grant, same as the existing
+                // flow — user just taps the mic/join button again once the page reloads.
+                runOnUiThread {
+                    ActivityCompat.requestPermissions(
+                        this@MainActivity,
+                        arrayOf(Manifest.permission.RECORD_AUDIO),
+                        MIC_PERMISSION_REQUEST_CODE
+                    )
+                }
+                return
+            }
+            agoraScope.launch {
+                val token = fetchAgoraToken(channel, uid)
+                if (token == null) {
+                    webView.evaluateJavascript(
+                        "window.onNativeAgoraError && window.onNativeAgoraError('TOKEN_FETCH_FAILED')", null
+                    )
+                    return@launch
+                }
+                val engine = ensureAgoraEngine()
+                val options = ChannelMediaOptions()
+                options.channelProfile = Constants.CHANNEL_PROFILE_LIVE_BROADCASTING
+                options.clientRoleType = Constants.CLIENT_ROLE_BROADCASTER
+                options.publishMicrophoneTrack = true
+                options.autoSubscribeAudio = true
+                engine.joinChannel(token, channel, uid, options)
+            }
+        }
+
+        @JavascriptInterface
+        fun setMicMuted(muted: Boolean) {
+            runOnUiThread { agoraEngine?.muteLocalAudioStream(muted) }
+        }
+
+        @JavascriptInterface
+        fun leaveLiveClassAudio() {
+            runOnUiThread { agoraEngine?.leaveChannel() }
+        }
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -195,15 +329,15 @@ class MainActivity : AppCompatActivity() {
         // treat this WebView like a normal mobile browser, so UPI shows up in the
         // checkout list — same as it already does when the site is opened in Chrome.
         // Full fix: Android WebView's User-Agent differs from real Chrome in TWO ways —
-// it adds a "; wv)" marker AND an extra "Version/x.x" token before "Chrome/".
-// Removing only "wv" wasn't enough; Razorpay was still detecting the "Version/x.x"
-// token and hiding UPI. Stripping both makes the UA identical to real Chrome's,
-// so Razorpay treats this WebView as a normal mobile browser and shows UPI.
-val defaultUA = webView.settings.userAgentString
-val cleanedUA = defaultUA
-    .replace("; wv", "")
-    .replace(Regex("Version/[0-9.]+\\s+"), "")
-webView.settings.userAgentString = cleanedUA
+        // it adds a "; wv)" marker AND an extra "Version/x.x" token before "Chrome/".
+        // Removing only "wv" wasn't enough; Razorpay was still detecting the "Version/x.x"
+        // token and hiding UPI. Stripping both makes the UA identical to real Chrome's,
+        // so Razorpay treats this WebView as a normal mobile browser and shows UPI.
+        val defaultUA = webView.settings.userAgentString
+        val cleanedUA = defaultUA
+            .replace("; wv", "")
+            .replace(Regex("Version/[0-9.]+\\s+"), "")
+        webView.settings.userAgentString = cleanedUA
 
         webView.addJavascriptInterface(WebAppInterface(), "AndroidApp")
 
@@ -264,103 +398,4 @@ webView.settings.userAgentString = cleanedUA
                             val fallbackUrl = Regex("S\\.browser_fallback_url=([^;]+)")
                                 .find(url.toString())?.groupValues?.get(1)
                             if (fallbackUrl != null) {
-                                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(Uri.decode(fallbackUrl))))
-                            }
-                            true
-                        } catch (e2: Exception) {
-                            true
-                        }
-                    }
-                }
-
-                return try {
-                    startActivity(Intent(Intent.ACTION_VIEW, url))
-                    true
-                } catch (e: ActivityNotFoundException) {
-                    true
-                }
-            }
-        }
-        webView.webChromeClient = object : WebChromeClient() {
-            override fun onPermissionRequest(request: PermissionRequest) {
-                runOnUiThread {
-                    val resources = request.resources
-                    val audioRequested = resources.any { it == PermissionRequest.RESOURCE_AUDIO_CAPTURE }
-                    val videoRequested = resources.any { it == PermissionRequest.RESOURCE_VIDEO_CAPTURE }
-
-                    val audioOk = !audioRequested || ContextCompat.checkSelfPermission(
-                        this@MainActivity, Manifest.permission.RECORD_AUDIO
-                    ) == PackageManager.PERMISSION_GRANTED
-                    val videoOk = !videoRequested || ContextCompat.checkSelfPermission(
-                        this@MainActivity, Manifest.permission.CAMERA
-                    ) == PackageManager.PERMISSION_GRANTED
-
-                    if ((audioRequested || videoRequested) && audioOk && videoOk) {
-                        // Grant exactly what the page asked for (mic-only, camera-only, or both)
-                        request.grant(resources)
-                    } else {
-                        request.deny()
-                    }
-                }
-            }
-
-            // This is the piece that was missing: without it, tapping any
-            // <input type="file"> in the page (Book Title's "Choose PDF",
-            // "Cover Photo", etc.) does absolutely nothing — Android WebView
-            // needs this callback implemented to actually open a file picker.
-            override fun onShowFileChooser(
-                webView: WebView?,
-                filePathCallback: ValueCallback<Array<Uri>>?,
-                fileChooserParams: FileChooserParams?
-            ): Boolean {
-                // If a previous chooser is somehow still pending, cancel it cleanly
-                // instead of leaking the callback.
-                fileChooserCallback?.onReceiveValue(null)
-                fileChooserCallback = filePathCallback
-
-                val intent = fileChooserParams?.createIntent()
-                return try {
-                    fileChooserLauncher.launch(intent)
-                    true
-                } catch (e: ActivityNotFoundException) {
-                    fileChooserCallback = null
-                    Toast.makeText(this@MainActivity, "No file picker app found on this device.", Toast.LENGTH_SHORT).show()
-                    false
-                } catch (e: Exception) {
-                    fileChooserCallback = null
-                    Toast.makeText(this@MainActivity, "Could not open file picker: ${e.message}", Toast.LENGTH_SHORT).show()
-                    false
-                }
-            }
-        }
-
-        // Always (re)load the live site on every launch — including when Android has
-        // killed the app in the background and the user reopens it, which used to be
-        // treated as a "restore" (savedInstanceState != null) and skip loading fresh
-        // content, leaving whatever stale page was left in memory.
-        webView.loadUrl(siteUrl)
-    }
-
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == MIC_PERMISSION_REQUEST_CODE &&
-            grantResults.isNotEmpty() &&
-            grantResults.any { it == PackageManager.PERMISSION_GRANTED }
-        ) {
-            webView.reload()
-        }
-    }
-
-    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        if (keyCode == KeyEvent.KEYCODE_BACK && webView.canGoBack()) {
-            webView.goBack()
-            return true
-        }
-        return super.onKeyDown(keyCode, event)
-    }
-}
-
+                                startActivity(Intent(Intent.ACTION_VIEW, Uri.par
