@@ -188,6 +188,15 @@ class MainActivity : AppCompatActivity() {
         // stale versions of the app until they cleared cache / reinstalled.
         webView.settings.cacheMode = WebSettings.LOAD_NO_CACHE
 
+        // Razorpay's checkout.js hides the UPI payment method when it detects the
+        // standard Android WebView "wv" marker in the User-Agent (it assumes such
+        // WebViews can't reliably launch UPI intent apps like GPay/PhonePe, so it
+        // only offers Card/NetBanking/Wallet). Stripping that marker makes Razorpay
+        // treat this WebView like a normal mobile browser, so UPI shows up in the
+        // checkout list — same as it already does when the site is opened in Chrome.
+        val defaultUA = webView.settings.userAgentString
+        webView.settings.userAgentString = defaultUA.replace("wv", "").replace("  ", " ")
+
         webView.addJavascriptInterface(WebAppInterface(), "AndroidApp")
 
         webView.webViewClient = object : WebViewClient() {
@@ -226,6 +235,36 @@ class MainActivity : AppCompatActivity() {
                     }
                     return false // your own site — keep loading inside the app's WebView as before
                 }
+
+                // Razorpay's UPI payment flow generates special "intent://" links
+                // (Android's Intent-URI format), not plain "upi://" links. Uri.parse()
+                // + a plain ACTION_VIEW cannot correctly launch these — Intent.parseUri()
+                // with URI_INTENT_SCHEME is required to properly read the target
+                // package/action/fallback baked into the string. Without this, tapping
+                // GPay/PhonePe/Paytm inside Razorpay checkout silently did nothing (the
+                // ActivityNotFoundException from the generic fallback below was swallowed).
+                if (scheme == "intent") {
+                    return try {
+                        val intent = Intent.parseUri(url.toString(), Intent.URI_INTENT_SCHEME)
+                        startActivity(intent)
+                        true
+                    } catch (e: Exception) {
+                        // Fallback: if the specific UPI app isn't installed, Razorpay embeds
+                        // a "browser_fallback_url" (usually the app's Play Store page) inside
+                        // the intent string — open that instead of doing nothing.
+                        try {
+                            val fallbackUrl = Regex("S\\.browser_fallback_url=([^;]+)")
+                                .find(url.toString())?.groupValues?.get(1)
+                            if (fallbackUrl != null) {
+                                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(Uri.decode(fallbackUrl))))
+                            }
+                            true
+                        } catch (e2: Exception) {
+                            true
+                        }
+                    }
+                }
+
                 return try {
                     startActivity(Intent(Intent.ACTION_VIEW, url))
                     true
