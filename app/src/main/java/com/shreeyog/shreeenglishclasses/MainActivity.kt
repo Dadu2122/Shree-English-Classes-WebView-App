@@ -320,7 +320,7 @@ class MainActivity : AppCompatActivity() {
         // Always fetch the live site fresh over the network instead of serving a
         // possibly-outdated cached copy — this is what was causing students to see
         // stale versions of the app until they cleared cache / reinstalled.
-        webView.settings.cacheMode = WebSettings.LOAD_NO_CACHE
+        webView.settings.cacheMode = WebSettings.LOAD_DEFAULT
 
         // Razorpay's checkout.js hides the UPI payment method when it detects the
         // standard Android WebView "wv" marker in the User-Agent (it assumes such
