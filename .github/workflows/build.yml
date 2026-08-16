@@ -23,7 +23,14 @@ jobs:
           gradle-version: '8.7'
 
       - name: Decode keystore
-        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > app/release.keystore
+        run: printf '%s' "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > app/release.keystore
+
+      - name: Verify keystore decoded correctly
+        run: |
+          echo "Keystore file size:"
+          ls -la app/release.keystore
+          echo "Trying to read the keystore with the stored alias/password:"
+          keytool -list -v -keystore app/release.keystore -alias "${{ secrets.KEY_ALIAS }}" -storepass "${{ secrets.KEYSTORE_PASSWORD }}"
 
       - name: Build Release APK
         run: gradle assembleRelease
