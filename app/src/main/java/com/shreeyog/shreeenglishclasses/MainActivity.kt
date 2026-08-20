@@ -298,18 +298,6 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
-            != PackageManager.PERMISSION_GRANTED ||
-            ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
-            != PackageManager.PERMISSION_GRANTED
-        ) {
-            ActivityCompat.requestPermissions(
-                this,
-                arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA),
-                MIC_PERMISSION_REQUEST_CODE
-            )
-        }
-
         webView = findViewById(R.id.webview)
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
@@ -468,11 +456,25 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Always (re)load the live site on every launch — including when Android has
-        // killed the app in the background and the user reopens it, which used to be
-        // treated as a "restore" (savedInstanceState != null) and skip loading fresh
-        // content, leaving whatever stale page was left in memory.
+        // Kick off the network fetch for the live site FIRST, before anything else
+        // that isn't strictly required for it (like the permission dialog below) —
+        // this is what actually makes the app feel like it opens instantly on touch,
+        // since the biggest chunk of "load time" is this network request itself.
         webView.loadUrl(siteUrl)
+
+        // Ask for mic/camera permission after kicking off the page load, not before —
+        // the dialog no longer delays the network fetch from starting.
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA),
+                MIC_PERMISSION_REQUEST_CODE
+            )
+        }
     }
 
     override fun onRequestPermissionsResult(
